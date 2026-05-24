@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -15,6 +16,12 @@ var getCmd = &cobra.Command{
 	Short: "Get an entry by ID",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runGet,
+}
+
+var getOut string
+
+func init() {
+	getCmd.Flags().StringVarP(&getOut, "output", "o", "text", "output format (text|json)")
 }
 
 func runGet(cmd *cobra.Command, args []string) error {
@@ -33,6 +40,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if getOut == "json" {
+		return printJSON(entry)
+	}
+
 	printEntry(entry)
 	return nil
 }
@@ -46,4 +57,13 @@ func printEntry(e *store.Entry) {
 	}
 	fmt.Printf("Created: %d\n", e.Created)
 	fmt.Printf("Updated: %d\n", e.Updated)
+}
+
+func printEntryJSON(e *store.Entry) error {
+	data, err := json.MarshalIndent(e, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal entry: %w", err)
+	}
+	fmt.Println(string(data))
+	return nil
 }

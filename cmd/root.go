@@ -52,6 +52,7 @@ func init() {
 	rootCmd.AddCommand(infoCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(searchCmd)
+	rootCmd.AddCommand(contextCmd)
 }
 
 // GetDBPath returns the effective .avdb path using config precedence.

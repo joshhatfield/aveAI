@@ -53,6 +53,12 @@ var initCmd = &cobra.Command{
 	RunE:  runInit,
 }
 
+var initOut string
+
+func init() {
+	initCmd.Flags().StringVarP(&initOut, "output", "o", "text", "output format (text|json)")
+}
+
 func runInit(cmd *cobra.Command, args []string) error {
 	basePath := ".ave"
 	if len(args) > 0 {
@@ -93,6 +99,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Reload config to pick up the new config file
 	config.ResetGlobal()
+
+	if initOut == "json" {
+		return printJSON(map[string]any{
+			"dbPath": dbPath,
+			"mapPath": mapPath,
+			"configPath": configPath,
+		})
+	}
 
 	return nil
 }

@@ -15,6 +15,12 @@ var listCmd = &cobra.Command{
 	RunE:  runList,
 }
 
+var listOut string
+
+func init() {
+	listCmd.Flags().StringVarP(&listOut, "output", "o", "text", "output format (text|json)")
+}
+
 func runList(cmd *cobra.Command, args []string) error {
 	var prefix string
 	if len(args) > 0 {
@@ -30,6 +36,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	if len(entries) == 0 {
 		fmt.Println("No entries found.")
 		return nil
+	}
+
+	if listOut == "json" {
+		return printJSON(map[string]any{
+			"entries": entries,
+			"count":   len(entries),
+		})
 	}
 
 	for _, e := range entries {

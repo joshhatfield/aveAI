@@ -19,11 +19,13 @@ var addCmd = &cobra.Command{
 }
 
 var (
-	addTags []string
+	addTags  []string
+	addOut  string
 )
 
 func init() {
 	addCmd.Flags().StringArrayVarP(&addTags, "tag", "t", nil, "tag to associate with entry")
+	addCmd.Flags().StringVarP(&addOut, "output", "o", "text", "output format (text|json)")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
@@ -54,6 +56,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	if err := format.Save(storePath, s); err != nil {
 		return fmt.Errorf("save .avdb: %w", err)
+	}
+
+	if addOut == "json" {
+		return printJSON(map[string]any{
+			"id":      id,
+			"sortKey": sortKey,
+			"value":   value,
+			"tags":    tags,
+		})
 	}
 
 	fmt.Printf("Added entry %d: %s → %s\n", id, sortKey, truncate(value, 50))

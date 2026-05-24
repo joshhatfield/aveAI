@@ -15,6 +15,12 @@ var infoCmd = &cobra.Command{
 	RunE:  runInfo,
 }
 
+var infoOut string
+
+func init() {
+	infoCmd.Flags().StringVarP(&infoOut, "output", "o", "text", "output format (text|json)")
+}
+
 func runInfo(cmd *cobra.Command, args []string) error {
 	dbPath := GetDBPath()
 
@@ -29,6 +35,10 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	stats := s.Stats()
+
+	if infoOut == "json" {
+		return printJSON(stats)
+	}
 
 	fmt.Println("aveAI Database Info")
 	fmt.Println("====================")
