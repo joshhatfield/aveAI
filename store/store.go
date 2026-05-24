@@ -73,15 +73,10 @@ func (s *Store) List(sortKeyPrefix string) []Entry {
 		return result
 	}
 
-	ids, ok := s.BySortKey[sortKeyPrefix]
-	if !ok {
-		return nil
-	}
-
-	result := make([]Entry, 0, len(ids))
-	for _, id := range ids {
-		if e, err := s.getByID(id); err == nil {
-			result = append(result, *e)
+	result := make([]Entry, 0)
+	for _, e := range s.Entries {
+		if strings.HasPrefix(e.SortKey, sortKeyPrefix) {
+			result = append(result, e)
 		}
 	}
 	return result
