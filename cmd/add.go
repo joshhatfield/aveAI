@@ -58,6 +58,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save .avdb: %w", err)
 	}
 
+	// Auto-grow schema if new keys were created
+	mapPath := getContextMapPath()
+	if err := autoGrowSchema(mapPath, sortKey); err != nil {
+		config.Warn("auto-grow schema", "error", err)
+	}
+
 	if addOut == "json" {
 		return printJSON(map[string]any{
 			"id":      id,

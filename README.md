@@ -23,7 +23,7 @@ AI agents (and humans) need fast, searchable access to project context — code 
 The instal script will allow for global or local opencode install
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/joshhatfield/aveAI/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joshhatfield/aveAI/master/scripts/install.sh | bash
 ```
 
 

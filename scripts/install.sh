@@ -1,12 +1,10 @@
 #!/bin/bash
 # aveAI OpenCode Plugin Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/joshhatfield/aveAI/main/scripts/install.sh | bash
-# Or with global flag: curl -fsSL ... | bash -s -- --global
 
 set -e
 
 REPO="joshhatfield/aveAI"
-BRANCH="${AV_BRANCH:-main}"
+BRANCH="${AV_BRANCH:-master}"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
 PLUGIN_FILE="ave.ts"
 PLUGIN_URL="${RAW_BASE}/.opencode/plugins/${PLUGIN_FILE}"
@@ -19,8 +17,9 @@ usage() {
   echo "aveAI OpenCode Plugin Installer"
   echo ""
   echo "Usage:"
-  echo "  curl -fsSL $PLUGIN_URL | bash          # Local install (current dir)"
-  echo "  curl -fsSL $PLUGIN_URL | bash -s -- --global  # Global install"
+  echo "  curl -fsSL $PLUGIN_URL | bash          # Interactive install"
+  echo "  curl -fsSL $PLUGIN_URL | bash -s -- 1  # Local install (non-interactive)"
+  echo "  curl -fsSL $PLUGIN_URL | bash -s -- 2  # Global install (non-interactive)"
   echo ""
   echo "The plugin will be installed to:"
   echo "  Local:  <project>/.opencode/plugins/ave.ts"
@@ -37,18 +36,19 @@ install_local() {
   # Check if we're in a git repo
   if [ ! -d ".git" ]; then
     log "Error: Not a git repository. Run from a project directory."
-    log "Or use --global for global installation."
     exit 1
   fi
 
-  # Check if .opencode directory exists
+  # Create .opencode/plugins if they don't exist
   if [ ! -d ".opencode" ]; then
-    log "Error: No .opencode directory found. Run 'opencode init' first."
-    exit 1
+    log "Creating .opencode directory..."
+    mkdir -p ".opencode/plugins"
+  elif [ ! -d ".opencode/plugins" ]; then
+    log "Creating .opencode/plugins directory..."
+    mkdir -p ".opencode/plugins"
   fi
 
   local_plugin_dir=".opencode/plugins"
-  mkdir -p "$local_plugin_dir"
 
   log "Installing ave plugin to ${local_project_dir}/${local_plugin_dir}/..."
   if curl -fsSL "$PLUGIN_URL" -o "${local_plugin_dir}/${PLUGIN_FILE}"; then
@@ -93,37 +93,49 @@ install_global() {
   log "Restart OpenCode or reload to use the ave tool."
 }
 
-# Parse arguments
-GLOBAL_FLAG=false
-while [[ $# -gt 0 ]]; do
+# Non-interactive mode: accept option as argument
+if [[ $# -gt 0 ]]; then
   case $1 in
-    --global)
-      GLOBAL_FLAG=true
-      shift
+    1)
+      install_local
+      exit 0
+      ;;
+    2)
+      install_global
+      exit 0
       ;;
     --help|-h)
       usage
       exit 0
       ;;
     *)
-      shift
+      echo "Invalid option: $1"
+      echo "Use 1 for local, 2 for global"
+      exit 1
       ;;
   esac
-done
-
-# Detect mode and install
-if [ "$GLOBAL_FLAG" = true ]; then
-  install_global
-elif [ -d ".git" ] && [ -d ".opencode/plugins" ]; then
-  install_local
-elif [ -d "$GLOBAL_DIR" ]; then
-  install_global
-else
-  log "Error: No install target found."
-  log ""
-  log "Options:"
-  log "  1. Run from a project with .opencode/plugins/ directory"
-  log "  2. Run with --global flag"
-  log "  3. Run 'opencode init' first to create .opencode/"
-  exit 1
 fi
+
+# Interactive mode
+echo "aveAI OpenCode Plugin Installer"
+echo "================================"
+echo ""
+echo "1) Local install  (current project: $(basename "$(pwd)"))"
+echo "2) Global install (all projects)"
+echo ""
+
+read -p "Choose an option [1]: " choice
+choice="${choice:-1}"
+
+case $choice in
+  1)
+    install_local
+    ;;
+  2)
+    install_global
+    ;;
+  *)
+    echo "Invalid option: $choice"
+    exit 1
+    ;;
+esac
