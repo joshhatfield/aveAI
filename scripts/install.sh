@@ -116,7 +116,7 @@ if [[ $# -gt 0 ]]; then
   esac
 fi
 
-# Interactive mode
+# Interactive mode - prompt user
 echo "aveAI OpenCode Plugin Installer"
 echo "================================"
 echo ""
@@ -125,7 +125,11 @@ echo "2) Global install (all projects)"
 echo ""
 
 read -p "Choose an option [1]: " choice
-choice="${choice:-1}"
+
+# Default to 1 if empty
+if [ -z "$choice" ]; then
+  choice=1
+fi
 
 case $choice in
   1)
