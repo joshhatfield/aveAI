@@ -1,7 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
-import path from "path"
 
 // AveArgs defines all arguments for the ave tool
 interface AveArgs {
@@ -14,6 +13,11 @@ interface AveArgs {
   format?: string
   path?: string
   limit?: number
+
+  // context pull options
+  depth?: number      // max hierarchy depth (0 = unlimited)
+  counts?: boolean    // show item counts
+  summary?: boolean  // summary mode (categories with counts only)
 }
 
 const AvePlugin: Plugin = async ({ directory }) => {
@@ -23,12 +27,17 @@ const AvePlugin: Plugin = async ({ directory }) => {
         description: `AVE — local context store for AI agents. Store and retrieve project conventions, patterns, notes, and decisions.
 Use this tool to:
 - search: Find context entries by text query
-- add: Store new conventions, patterns, decisions  
+- add: Store new conventions, patterns, decisions
 - init: Initialize a new .avdb database
 - list: List entries, optionally filtered by sort-key
 - get: Retrieve a single entry by ID
 - info: Show database statistics
-- context: Pull pseudocontext for LLM seeding`,
+- context: Pull pseudocontext for LLM seeding (use depth/counts/summary to control output size)
+
+Context pull optimization options (for large databases):
+- depth: Limit hierarchy depth to N levels (1 = top-level only, 2 = one nested, etc.)
+- counts: Show item counts at each level
+- summary: Show only categories with total counts (most compact)`,
 
         args: {
           command: tool.schema.enum([
@@ -52,6 +61,9 @@ Use this tool to:
 
           // context
           format: tool.schema.string().optional().describe("Output format: 'markdown' or 'json'"),
+          depth: tool.schema.number().optional().describe("Max hierarchy depth (0=unlimited, 1=top-level only, etc.)"),
+          counts: tool.schema.boolean().optional().describe("Show item counts at each level"),
+          summary: tool.schema.boolean().optional().describe("Summary mode - categories with counts only"),
         },
 
         async execute(args: AveArgs, context: { directory: string }) {
@@ -95,6 +107,9 @@ function buildAveCommand(args: AveArgs): string[] {
     case "context":
       cmd.push("pull")
       if (args.format) cmd.push("--format", args.format)
+      if (args.depth) cmd.push("--depth", String(args.depth))
+      if (args.counts) cmd.push("--counts")
+      if (args.summary) cmd.push("--summary")
       break
 
     case "info":
