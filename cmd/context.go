@@ -78,110 +78,99 @@ func init() {
 }
 
 func runContextPull(cmd *cobra.Command, args []string) error {
-	mapPath := getContextMapPath()
+	dbPath := GetDBPath()
 
-	s, err := schema.LoadSchema(mapPath)
+	// Load entries from database
+	s, err := format.Load(dbPath)
 	if err != nil {
-		return fmt.Errorf("load map.yaml: %w", err)
+		return fmt.Errorf("load .avdb: %w", err)
 	}
 
-	if s.Context == nil || !s.HasContext() {
+	entries := s.All()
+	if len(entries) == 0 {
 		if outputFormat == "json" {
 			return printJSON(map[string]any{
-				"error": "no context found in map.yaml",
-				"hint":  "run 'ave context add' to add context or edit map.yaml directly",
+				"error": "no entries found in database",
+				"hint":  "run 'ave add' to add entries first",
 			})
 		}
-		fmt.Println("No context found in map.yaml. Run 'ave context add' or 'ave context edit' to add context.")
+		fmt.Println("No entries found in database. Run 'ave add' to add entries first.")
 		return nil
 	}
 
+	// Build hierarchy from DB entries
+	hierarchy := buildKeyHierarchy(entries)
+	notes := schema.NotesHierarchy(hierarchy)
+
+	// Apply context optimization options in correct order:
+	// 1. TruncateDepth (before WithCounts corrupts structure)
+	// 2. TruncateKeys
+	// 3. WithCounts (for counts/summary)
+	if pullDepth > 0 {
+		notes = notes.TruncateDepth(pullDepth)
+	}
+	if pullLimit > 0 {
+		notes = notes.TruncateKeys(pullLimit)
+	}
+	if pullCounts || pullSummary {
+		notes = notes.WithCounts()
+	}
+
+	// Apply context optimization options
+	if pullSummary {
+		// Summary mode: just show top-level categories with counts
+		type summaryEntry struct {
+			Category string `json:"category"`
+			Count    int    `json:"count"`
+		}
+		var summaryList []summaryEntry
+		for key, value := range notes {
+			// value is WithCounts result: {count: N, children: {...}} or {leaf: true, count: N}
+			if m, ok := value.(map[string]any); ok {
+				if count, ok := m["count"].(int); ok {
+					summaryList = append(summaryList, summaryEntry{Category: key, Count: count})
+					continue
+				}
+			}
+			summaryList = append(summaryList, summaryEntry{Category: key, Count: 1})
+		}
+
+		if outputFormat == "json" {
+			return printJSON(map[string]any{
+				"summary":    summaryList,
+				"total_keys": len(entries),
+			})
+		}
+	}
+
 	if outputFormat == "json" {
-		return printJSON(s.Context)
+		return printJSON(map[string]any{
+			"notes": notes,
+			"total_keys": len(entries),
+		})
 	}
 
 	// Markdown output
 	var sb strings.Builder
-	proj := s.Context.Project
+	sb.WriteString("# Database Index\n\n")
+	sb.WriteString(fmt.Sprintf("Total entries: %d\n\n", len(entries)))
 
-	sb.WriteString("# Project Context")
-	if proj.Name != "" {
-		sb.WriteString(" — " + proj.Name)
-	}
-	sb.WriteString("\n\n")
-
-	if proj.Description != "" {
-		sb.WriteString(proj.Description + "\n\n")
-	}
-
-	if len(proj.Conventions) > 0 {
-		sb.WriteString("## Conventions\n")
-		for _, c := range proj.Conventions {
-			sb.WriteString("- " + c + "\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(proj.Patterns) > 0 {
-		sb.WriteString("## Patterns\n")
-		for _, p := range proj.Patterns {
-			sb.WriteString("- " + p + "\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	if proj.Notes != nil && len(proj.Notes) > 0 {
-		// Apply context optimization options
-		notes := schema.NotesHierarchy(proj.Notes)
-
-		if pullSummary {
-			// Summary mode: just show top-level categories with counts
-			sb.WriteString("## Notes (summary)\n")
-			for key, value := range notes {
-				if nested, ok := value.(map[string]any); ok {
-					count := schema.NotesHierarchy(nested).CountLeaves()
+	if pullSummary {
+		sb.WriteString("## Categories (summary)\n")
+		for key, value := range notes {
+			// value is WithCounts result: {count: N, children: {...}} or {leaf: true, count: N}
+			if m, ok := value.(map[string]any); ok {
+				if count, ok := m["count"].(int); ok {
 					sb.WriteString(fmt.Sprintf("- %s: {count: %d}\n", key, count))
-				} else {
-					sb.WriteString(fmt.Sprintf("- %s\n", key))
+					continue
 				}
 			}
-		} else {
-			// Normal mode with options
-			if pullDepth > 0 {
-				notes = notes.TruncateDepth(pullDepth)
-			}
-			if pullLimit > 0 {
-				notes = notes.TruncateKeys(pullLimit)
-			}
-			if pullCounts {
-				notes = notes.WithCounts()
-			}
-
-			sb.WriteString("## Notes\n")
-			for key, value := range notes {
-				printHierarchy(&sb, key, value, 0)
-			}
+			sb.WriteString(fmt.Sprintf("- %s\n", key))
 		}
-		sb.WriteString("\n")
-	}
-
-	if s.Context.Commands.Add.Usage != "" {
-		sb.WriteString("## Command Usage\n")
-		if s.Context.Commands.Add.Usage != "" {
-			sb.WriteString("### add\n")
-			sb.WriteString("`" + s.Context.Commands.Add.Usage + "`\n")
-			for _, ex := range s.Context.Commands.Add.Examples {
-				sb.WriteString("- " + ex + "\n")
-			}
-			sb.WriteString("\n")
-		}
-		if s.Context.Commands.Search.Usage != "" {
-			sb.WriteString("### search\n")
-			sb.WriteString("`" + s.Context.Commands.Search.Usage + "`\n")
-			for _, ex := range s.Context.Commands.Search.Examples {
-				sb.WriteString("- " + ex + "\n")
-			}
-			sb.WriteString("\n")
+	} else {
+		sb.WriteString("## Notes\n")
+		for key, value := range notes {
+			printHierarchy(&sb, key, value, 0)
 		}
 	}
 
@@ -386,6 +375,27 @@ func mapToNotes(hierarchy map[string]any, prefix string) []string {
 // printHierarchy recursively prints a hierarchy map as indented markdown list.
 func printHierarchy(sb *strings.Builder, key string, value any, indent int) {
 	prefix := strings.Repeat("  ", indent)
+
+	// Check if this is a WithCounts node (has count and children keys)
+	if m, ok := value.(map[string]any); ok {
+		if count, hasCount := m["count"].(int); hasCount {
+			// WithCounts structure
+			if _, isLeaf := m["leaf"]; isLeaf {
+				// Leaf node - just show the count
+				sb.WriteString(fmt.Sprintf("%s- %s: {count: %d}\n", prefix, key, count))
+				return
+			}
+			// Branch node - show count, then children
+			sb.WriteString(fmt.Sprintf("%s- %s: {count: %d}\n", prefix, key, count))
+			if children, ok := m["children"].(map[string]any); ok {
+				for k, v := range children {
+					printHierarchy(sb, k, v, indent+1)
+				}
+			}
+			return
+		}
+	}
+
 	sb.WriteString(prefix + "- " + key + "\n")
 	// Handle nested hierarchies (schema.NotesHierarchy is map[string]any)
 	switch v := value.(type) {

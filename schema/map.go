@@ -245,9 +245,30 @@ func (h NotesHierarchy) CountLeaves() int {
 func countLeavesRecursive(h map[string]any) int {
 	count := 0
 	for _, v := range h {
-		if nested, ok := v.(map[string]any); ok {
-			count += countLeavesRecursive(nested)
-		} else {
+		switch vv := v.(type) {
+		case map[string]any:
+			// Check for leaf marker
+			if _, isLeaf := vv["leaf"]; isLeaf {
+				if c, ok := vv["count"].(int); ok {
+					count += c
+				} else {
+					count++
+				}
+				continue
+			}
+			// Check for children key (WithCounts structure)
+			if children, ok := vv["children"]; ok {
+				if childMap, ok := children.(map[string]any); ok {
+					count += countLeavesRecursive(childMap)
+				}
+			} else if len(vv) == 0 {
+				// Empty map is a leaf (from buildKeyHierarchy: current[part] = {})
+				count++
+			} else {
+				// Regular nested hierarchy with content
+				count += countLeavesRecursive(vv)
+			}
+		default:
 			count++
 		}
 	}
@@ -263,10 +284,22 @@ func withCountsRecursive(h map[string]any) map[string]any {
 	result := make(map[string]any)
 	for k, v := range h {
 		if nested, ok := v.(map[string]any); ok {
+			// Recursively process children
+			processed := withCountsRecursive(nested)
 			count := countLeavesRecursive(nested)
-			result[k] = map[string]any{"count": count}
+
+			// Build node: always include children, mark leaf if no children
+			node := map[string]any{
+				"count": count,
+			}
+			// Only add children if there are any (to mark as non-leaf)
+			if len(processed) > 0 {
+				node["children"] = processed
+			}
+			result[k] = node
 		} else {
-			result[k] = v
+			// Leaf value - mark with leaf: true so it's distinguishable from empty category {}
+			result[k] = map[string]any{"leaf": true, "count": 1}
 		}
 	}
 	return result
