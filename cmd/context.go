@@ -68,7 +68,7 @@ func init() {
 }
 
 func runContextPull(cmd *cobra.Command, args []string) error {
-	mapPath := GetMapPath()
+	mapPath := getContextMapPath()
 
 	s, err := schema.LoadSchema(mapPath)
 	if err != nil {
@@ -155,7 +155,7 @@ func runContextPull(cmd *cobra.Command, args []string) error {
 func runContextUpdate(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	value := args[1]
-	mapPath := GetMapPath()
+	mapPath := getContextMapPath()
 
 	s, err := schema.LoadSchema(mapPath)
 	if err != nil {
@@ -224,7 +224,7 @@ func runContextAdd(cmd *cobra.Command, args []string) error {
 	sortKey := args[0]
 	value := args[1]
 	dbPath := GetDBPath()
-	mapPath := GetMapPath()
+	mapPath := getContextMapPath()
 
 	// Load or create store
 	s, err := loadStore(dbPath)
@@ -273,7 +273,7 @@ func runContextAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runContextEdit(cmd *cobra.Command, args []string) error {
-	mapPath := GetMapPath()
+	mapPath := getContextMapPath()
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vim" // fallback
@@ -305,7 +305,7 @@ func runContextEdit(cmd *cobra.Command, args []string) error {
 
 func runContextSync(cmd *cobra.Command, args []string) error {
 	dbPath := GetDBPath()
-	mapPath := GetMapPath()
+	mapPath := getContextMapPath()
 
 	s, err := format.Load(dbPath)
 	if err != nil {
