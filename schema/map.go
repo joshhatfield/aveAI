@@ -3,6 +3,7 @@ package schema
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -10,14 +11,48 @@ import (
 // Schema represents a parsed map.yaml file.
 type Schema struct {
 	Version int              `yaml:"version"`
+	Context *ContextBlock    `yaml:"context,omitempty"`
 	Keys    map[string]*Node `yaml:"keys"`
+}
+
+// ContextBlock holds the pseudocontext section of the map.yaml.
+type ContextBlock struct {
+	Project  ProjectContext `yaml:"project,omitempty"`
+	Commands CommandHelp    `yaml:"commands,omitempty"`
+}
+
+// ProjectContext holds project-level metadata and conventions.
+type ProjectContext struct {
+	Name        string   `yaml:"name,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Conventions []string `yaml:"conventions,omitempty"`
+	Patterns    []string `yaml:"patterns,omitempty"`
+	Notes       []string `yaml:"notes,omitempty"`
+}
+
+// CommandHelp holds usage examples for each command.
+type CommandHelp struct {
+	Add    CommandSpec `yaml:"add,omitempty"`
+	Search CommandSpec `yaml:"search,omitempty"`
+	List   CommandSpec `yaml:"list,omitempty"`
+	Get    CommandSpec `yaml:"get,omitempty"`
+	Init   CommandSpec `yaml:"init,omitempty"`
+	Info   CommandSpec `yaml:"info,omitempty"`
+	Delete CommandSpec `yaml:"delete,omitempty"`
+	Context CommandSpec `yaml:"context,omitempty"`
+}
+
+// CommandSpec holds usage and examples for a command.
+type CommandSpec struct {
+	Usage    string   `yaml:"usage,omitempty"`
+	Examples []string `yaml:"examples,omitempty"`
 }
 
 // Node represents a single key or namespace in the key hierarchy.
 type Node struct {
-	Description string            `yaml:"description"`
-	Aliases     []string          `yaml:"aliases,omitempty"`
-	Children    map[string]*Node  `yaml:"children,omitempty"`
+	Description string           `yaml:"description"`
+	Aliases     []string         `yaml:"aliases,omitempty"`
+	Children    map[string]*Node `yaml:"children,omitempty"`
 }
 
 // LoadSchema reads and parses a map.yaml file.
@@ -50,6 +85,18 @@ func (s *Schema) Validate() error {
 	return validateNodes(s.Keys, "")
 }
 
+// Save writes the schema back to a map.yaml file.
+func (s *Schema) Save(path string) error {
+	data, err := yaml.Marshal(s)
+	if err != nil {
+		return fmt.Errorf("marshal schema: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
 func validateNodes(nodes map[string]*Node, path string) error {
 	for name, node := range nodes {
 		currentPath := path + "/" + name
@@ -71,9 +118,83 @@ func validateNodes(nodes map[string]*Node, path string) error {
 // Resolve validates that a sort-key exists in the schema.
 func (s *Schema) Resolve(sortKey string) error {
 	if s == nil {
-		// No schema loaded — accept any sort-key
 		return nil
 	}
-	// TODO: traverse key hierarchy to validate
+	parts := strings.Split(sortKey, "/")
+	current := s.Keys
+	for i, part := range parts {
+		node, ok := current[part]
+		if !ok {
+			return fmt.Errorf("sort-key '%s' not found in schema", sortKey)
+		}
+		if i < len(parts)-1 {
+			if node.Children == nil {
+				return fmt.Errorf("sort-key '%s' has no children at '%s'", sortKey, part)
+			}
+			current = node.Children
+		}
+	}
 	return nil
+}
+
+// HasContext returns true if the schema has a context block.
+func (s *Schema) HasContext() bool {
+	return s.Context != nil && (s.Context.Project.Name != "" || len(s.Context.Project.Conventions) > 0)
+}
+
+// GetContextDescription returns the project's description if set.
+func (s *Schema) GetContextDescription() string {
+	if s.Context == nil {
+		return ""
+	}
+	return s.Context.Project.Description
+}
+
+// AppendConvention appends a convention to the project's conventions list.
+func (s *Schema) AppendConvention(convention string) {
+	if s.Context == nil {
+		s.Context = &ContextBlock{Project: ProjectContext{}}
+	}
+	if s.Context.Project.Conventions == nil {
+		s.Context.Project.Conventions = []string{}
+	}
+	s.Context.Project.Conventions = append(s.Context.Project.Conventions, convention)
+}
+
+// AppendPattern appends a pattern to the project's patterns list.
+func (s *Schema) AppendPattern(pattern string) {
+	if s.Context == nil {
+		s.Context = &ContextBlock{Project: ProjectContext{}}
+	}
+	if s.Context.Project.Patterns == nil {
+		s.Context.Project.Patterns = []string{}
+	}
+	s.Context.Project.Patterns = append(s.Context.Project.Patterns, pattern)
+}
+
+// AppendNote appends a note to the project's notes list.
+func (s *Schema) AppendNote(note string) {
+	if s.Context == nil {
+		s.Context = &ContextBlock{Project: ProjectContext{}}
+	}
+	if s.Context.Project.Notes == nil {
+		s.Context.Project.Notes = []string{}
+	}
+	s.Context.Project.Notes = append(s.Context.Project.Notes, note)
+}
+
+// SetProjectName sets the project's name.
+func (s *Schema) SetProjectName(name string) {
+	if s.Context == nil {
+		s.Context = &ContextBlock{Project: ProjectContext{}}
+	}
+	s.Context.Project.Name = name
+}
+
+// SetProjectDescription sets the project's description.
+func (s *Schema) SetProjectDescription(desc string) {
+	if s.Context == nil {
+		s.Context = &ContextBlock{Project: ProjectContext{}}
+	}
+	s.Context.Project.Description = desc
 }
