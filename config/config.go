@@ -16,6 +16,7 @@ type Config struct {
 	Map     MapConfig      `yaml:"map"`
 	Logging LogConfig      `yaml:"logging"`
 	Search  SearchConfig   `yaml:"search"`
+	Context ContextConfig  `yaml:"context"`
 }
 
 // DBConfig holds database path settings.
@@ -39,6 +40,14 @@ type SearchConfig struct {
 	DefaultLimit int `yaml:"default_limit"`
 }
 
+// ContextConfig holds context/pull defaults.
+type ContextConfig struct {
+	MaxDepth    int  `yaml:"max_depth"`    // max hierarchy depth (0 = unlimited)
+	MaxKeys     int  `yaml:"max_keys"`    // max total keys to show
+	ShowCounts  bool `yaml:"show_counts"` // show item counts
+	Summary     bool `yaml:"summary"`     // summary mode
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -55,6 +64,12 @@ func DefaultConfig() *Config {
 		},
 		Search: SearchConfig{
 			DefaultLimit: 10,
+		},
+		Context: ContextConfig{
+			MaxDepth:   0,   // unlimited
+			MaxKeys:    1000,
+			ShowCounts: false,
+			Summary:    false,
 		},
 	}
 }

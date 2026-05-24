@@ -53,6 +53,10 @@ var syncCmd = &cobra.Command{
 
 var (
 	outputFormat string
+	pullDepth    int
+	pullCounts   bool
+	pullLimit    int
+	pullSummary  bool
 )
 
 func init() {
@@ -65,6 +69,12 @@ func init() {
 	for _, cmd := range []*cobra.Command{pullCmd, updateCmd, addContextCmd, editCmd, syncCmd} {
 		cmd.Flags().StringVar(&outputFormat, "output", "text", "output format (text|json)")
 	}
+
+	// Context pull flags
+	pullCmd.Flags().IntVar(&pullDepth, "depth", 0, "max hierarchy depth (0=unlimited)")
+	pullCmd.Flags().BoolVar(&pullCounts, "counts", false, "show item counts")
+	pullCmd.Flags().IntVar(&pullLimit, "limit", 0, "max keys per branch")
+	pullCmd.Flags().BoolVar(&pullSummary, "summary", false, "summary mode (categories with counts)")
 }
 
 func runContextPull(cmd *cobra.Command, args []string) error {
@@ -120,10 +130,37 @@ func runContextPull(cmd *cobra.Command, args []string) error {
 		sb.WriteString("\n")
 	}
 
-	if len(proj.Notes) > 0 {
-		sb.WriteString("## Notes\n")
-		for _, n := range proj.Notes {
-			sb.WriteString("- " + n + "\n")
+	if proj.Notes != nil && len(proj.Notes) > 0 {
+		// Apply context optimization options
+		notes := schema.NotesHierarchy(proj.Notes)
+
+		if pullSummary {
+			// Summary mode: just show top-level categories with counts
+			sb.WriteString("## Notes (summary)\n")
+			for key, value := range notes {
+				if nested, ok := value.(map[string]any); ok {
+					count := schema.NotesHierarchy(nested).CountLeaves()
+					sb.WriteString(fmt.Sprintf("- %s: {count: %d}\n", key, count))
+				} else {
+					sb.WriteString(fmt.Sprintf("- %s\n", key))
+				}
+			}
+		} else {
+			// Normal mode with options
+			if pullDepth > 0 {
+				notes = notes.TruncateDepth(pullDepth)
+			}
+			if pullLimit > 0 {
+				notes = notes.TruncateKeys(pullLimit)
+			}
+			if pullCounts {
+				notes = notes.WithCounts()
+			}
+
+			sb.WriteString("## Notes\n")
+			for key, value := range notes {
+				printHierarchy(&sb, key, value, 0)
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -303,6 +340,70 @@ func runContextEdit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildKeyHierarchy builds a nested map from sort-key paths.
+// e.g., "items/cards/card1" → {"items": {"cards": {"card1": {}}}}
+func buildKeyHierarchy(entries []store.Entry) map[string]any {
+	hierarchy := make(map[string]any)
+
+	for _, e := range entries {
+		parts := strings.Split(e.SortKey, "/")
+		current := hierarchy
+		for i, part := range parts {
+			if i == len(parts)-1 {
+				// Leaf: use empty struct or true
+				current[part] = map[string]any{}
+			} else {
+				// Branch: create nested map if not exists
+				if _, ok := current[part]; !ok {
+					current[part] = make(map[string]any)
+				}
+			}
+			current = current[part].(map[string]any)
+		}
+	}
+
+	return hierarchy
+}
+
+// mapToNotes converts a nested map hierarchy to dot-notation strings for context.
+func mapToNotes(hierarchy map[string]any, prefix string) []string {
+	var notes []string
+
+	for key, value := range hierarchy {
+		fullKey := key
+		if prefix != "" {
+			fullKey = prefix + "." + key
+		}
+		notes = append(notes, fullKey)
+		if nested, ok := value.(map[string]any); ok {
+			notes = append(notes, mapToNotes(nested, fullKey)...)
+		}
+	}
+
+	return notes
+}
+
+// printHierarchy recursively prints a hierarchy map as indented markdown list.
+func printHierarchy(sb *strings.Builder, key string, value any, indent int) {
+	prefix := strings.Repeat("  ", indent)
+	sb.WriteString(prefix + "- " + key + "\n")
+	// Handle nested hierarchies (schema.NotesHierarchy is map[string]any)
+	switch v := value.(type) {
+	case schema.NotesHierarchy:
+		if len(v) > 0 {
+			for k, val := range v {
+				printHierarchy(sb, k, val, indent+1)
+			}
+		}
+	case map[string]any:
+		if len(v) > 0 {
+			for k, val := range v {
+				printHierarchy(sb, k, val, indent+1)
+			}
+		}
+	}
+}
+
 func runContextSync(cmd *cobra.Command, args []string) error {
 	dbPath := GetDBPath()
 	mapPath := getContextMapPath()
@@ -321,13 +422,8 @@ func runContextSync(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Group entries by top-level sort-key
-	byTop := make(map[string][]string)
-	for _, e := range entries {
-		parts := strings.SplitN(e.SortKey, "/", 2)
-		top := parts[0]
-		byTop[top] = append(byTop[top], e.Value)
-	}
+	// Build hierarchy from entries: e.g., "items/cards/card1" → nested map
+	hierarchy := buildKeyHierarchy(entries)
 
 	// Load existing schema and update context
 	sc, err := schema.LoadSchema(mapPath)
@@ -339,31 +435,19 @@ func runContextSync(cmd *cobra.Command, args []string) error {
 		sc.Context = &schema.ContextBlock{Project: schema.ProjectContext{}}
 	}
 
-	// Merge into context
-	for top, values := range byTop {
-		switch top {
-		case "code":
-			if sc.Context.Project.Conventions == nil {
-				sc.Context.Project.Conventions = []string{}
-			}
-			for _, v := range values {
-				sc.Context.Project.Conventions = append(sc.Context.Project.Conventions, v)
-			}
-		case "notes":
-			if sc.Context.Project.Notes == nil {
-				sc.Context.Project.Notes = []string{}
-			}
-			for _, v := range values {
-				sc.Context.Project.Notes = append(sc.Context.Project.Notes, v)
-			}
-		default:
-			if sc.Context.Project.Notes == nil {
-				sc.Context.Project.Notes = []string{}
-			}
-			for _, v := range values {
-				sc.Context.Project.Notes = append(sc.Context.Project.Notes, v)
-			}
-		}
+	// Clear and rebuild
+	sc.Context.Project.Conventions = []string{}
+	sc.Context.Project.Patterns = []string{}
+	sc.Context.Project.Notes = schema.NotesHierarchy{}
+
+	// Add hierarchy directly (becomes nested YAML)
+	for k, v := range hierarchy {
+		sc.Context.Project.Notes[k] = v
+	}
+
+	// Also update the schema keys section with actual entries
+	for _, e := range entries {
+		autoGrowSchema(mapPath, e.SortKey)
 	}
 
 	if err := sc.Save(mapPath); err != nil {
@@ -372,13 +456,13 @@ func runContextSync(cmd *cobra.Command, args []string) error {
 
 	if outputFormat == "json" {
 		return printJSON(map[string]any{
-			"synced":   len(entries),
-			"key_count": len(byTop),
-			"saved":    mapPath,
+			"synced_entries": len(entries),
+			"hierarchy":      hierarchy,
+			"saved":          mapPath,
 		})
 	}
 
-	fmt.Printf("Synced %d entries into context (%d top-level keys)\n", len(entries), len(byTop))
+	fmt.Printf("Synced %d entries into context\n", len(entries))
 	return nil
 }
 

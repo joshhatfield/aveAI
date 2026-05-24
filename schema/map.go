@@ -23,12 +23,15 @@ type ContextBlock struct {
 
 // ProjectContext holds project-level metadata and conventions.
 type ProjectContext struct {
-	Name        string   `yaml:"name,omitempty"`
-	Description string   `yaml:"description,omitempty"`
-	Conventions []string `yaml:"conventions,omitempty"`
-	Patterns    []string `yaml:"patterns,omitempty"`
-	Notes       []string `yaml:"notes,omitempty"`
+	Name          string          `yaml:"name,omitempty"`
+	Description  string          `yaml:"description,omitempty"`
+	Conventions  []string        `yaml:"conventions,omitempty"`
+	Patterns     []string        `yaml:"patterns,omitempty"`
+	Notes        NotesHierarchy  `yaml:"notes,omitempty"`
 }
+
+// NotesHierarchy represents arbitrary nested YAML for context index.
+type NotesHierarchy map[string]any
 
 // CommandHelp holds usage examples for each command.
 type CommandHelp struct {
@@ -139,7 +142,24 @@ func (s *Schema) Resolve(sortKey string) error {
 
 // HasContext returns true if the schema has a context block.
 func (s *Schema) HasContext() bool {
-	return s.Context != nil && (s.Context.Project.Name != "" || len(s.Context.Project.Conventions) > 0)
+	if s.Context == nil {
+		return false
+	}
+	// Check if there's any meaningful context content
+	if s.Context.Project.Name != "" {
+		return true
+	}
+	if len(s.Context.Project.Conventions) > 0 {
+		return true
+	}
+	if len(s.Context.Project.Patterns) > 0 {
+		return true
+	}
+	// Check notes hierarchy (NotesHierarchy is map[string]any)
+	if s.Context.Project.Notes != nil && len(s.Context.Project.Notes) > 0 {
+		return true
+	}
+	return false
 }
 
 // GetContextDescription returns the project's description if set.
@@ -173,17 +193,13 @@ func (s *Schema) AppendPattern(pattern string) {
 }
 
 // AppendNote appends a note to the project's notes list.
+// DEPRECATED: Notes is now a hierarchy (map[string]any), not []string.
+// Use context sync to rebuild the notes hierarchy from sort-keys.
 func (s *Schema) AppendNote(note string) {
-	if s.Context == nil {
-		s.Context = &ContextBlock{Project: ProjectContext{}}
-	}
-	if s.Context.Project.Notes == nil {
-		s.Context.Project.Notes = []string{}
-	}
-	s.Context.Project.Notes = append(s.Context.Project.Notes, note)
+	// Deprecated: Notes is now a nested hierarchy, not a flat list.
+	// This function is kept for compatibility but does nothing.
 }
 
-// SetProjectName sets the project's name.
 func (s *Schema) SetProjectName(name string) {
 	if s.Context == nil {
 		s.Context = &ContextBlock{Project: ProjectContext{}}
@@ -197,4 +213,93 @@ func (s *Schema) SetProjectDescription(desc string) {
 		s.Context = &ContextBlock{Project: ProjectContext{}}
 	}
 	s.Context.Project.Description = desc
+}
+
+// TruncateDepth returns a new NotesHierarchy truncated to maxDepth levels.
+// Depth 0 = no truncation, depth 1 = top-level only, depth 2 = top + one level, etc.
+func (h NotesHierarchy) TruncateDepth(maxDepth int) NotesHierarchy {
+	if maxDepth <= 0 {
+		return h
+	}
+	return truncateDepthRecursive(h, 0, maxDepth)
+}
+
+func truncateDepthRecursive(h map[string]any, currentDepth, maxDepth int) map[string]any {
+	result := make(map[string]any)
+	for k, v := range h {
+		if nested, ok := v.(map[string]any); ok && currentDepth < maxDepth {
+			result[k] = truncateDepthRecursive(nested, currentDepth+1, maxDepth)
+		} else {
+			// At max depth or leaf node - truncate to empty marker
+			result[k] = map[string]any{}
+		}
+	}
+	return result
+}
+
+// CountLeaves returns total number of leaf entries in the hierarchy.
+func (h NotesHierarchy) CountLeaves() int {
+	return countLeavesRecursive(h)
+}
+
+func countLeavesRecursive(h map[string]any) int {
+	count := 0
+	for _, v := range h {
+		if nested, ok := v.(map[string]any); ok {
+			count += countLeavesRecursive(nested)
+		} else {
+			count++
+		}
+	}
+	return count
+}
+
+// WithCounts returns a new hierarchy where each branch has a {count: N} annotation.
+func (h NotesHierarchy) WithCounts() NotesHierarchy {
+	return withCountsRecursive(h)
+}
+
+func withCountsRecursive(h map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, v := range h {
+		if nested, ok := v.(map[string]any); ok {
+			count := countLeavesRecursive(nested)
+			result[k] = map[string]any{"count": count}
+		} else {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// TruncateKeys returns a new hierarchy with at most limit keys per branch.
+// If limit > 0 and there are more keys, the remainder is indicated with {remaining: N}.
+func (h NotesHierarchy) TruncateKeys(limit int) NotesHierarchy {
+	if limit <= 0 {
+		return h
+	}
+	return truncateKeysRecursive(h, limit)
+}
+
+func truncateKeysRecursive(h map[string]any, limit int) map[string]any {
+	result := make(map[string]any)
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	for i, k := range keys {
+		if i >= limit {
+			continue
+		}
+		v := h[k]
+		if nested, ok := v.(map[string]any); ok {
+			result[k] = truncateKeysRecursive(nested, limit)
+		} else {
+			result[k] = v
+		}
+	}
+	if len(keys) > limit {
+		result["..."] = map[string]any{"remaining": len(keys) - limit}
+	}
+	return result
 }
