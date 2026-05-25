@@ -25,30 +25,17 @@ var pullCmd = &cobra.Command{
 	RunE:  runContextPull,
 }
 
-var updateCmd = &cobra.Command{
-	Use:   "update <key> <value>",
-	Short: "Update a context value (e.g., project.conventions)",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runContextUpdate,
-}
-
 var addContextCmd = &cobra.Command{
 	Use:   "add <sort-key> <value>",
-	Short: "Add entry AND append to pseudocontext",
+	Short: "Add entry to database",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runContextAdd,
 }
 
 var editCmd = &cobra.Command{
 	Use:   "edit",
-	Short: "Open map.yaml in $EDITOR",
+	Short: "DEPRECATED: Open map.yaml in $EDITOR (use 'ave search' instead)",
 	RunE:  runContextEdit,
-}
-
-var syncCmd = &cobra.Command{
-	Use:   "sync",
-	Short: "Regenerate context from all .avdb entries",
-	RunE:  runContextSync,
 }
 
 var (
@@ -61,12 +48,10 @@ var (
 
 func init() {
 	contextCmd.AddCommand(pullCmd)
-	contextCmd.AddCommand(updateCmd)
 	contextCmd.AddCommand(addContextCmd)
 	contextCmd.AddCommand(editCmd)
-	contextCmd.AddCommand(syncCmd)
 
-	for _, cmd := range []*cobra.Command{pullCmd, updateCmd, addContextCmd, editCmd, syncCmd} {
+	for _, cmd := range []*cobra.Command{pullCmd, addContextCmd, editCmd} {
 		cmd.Flags().StringVar(&outputFormat, "output", "text", "output format (text|json)")
 	}
 
@@ -178,79 +163,10 @@ func runContextPull(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runContextUpdate(cmd *cobra.Command, args []string) error {
-	key := args[0]
-	value := args[1]
-	mapPath := getContextMapPath()
-
-	s, err := schema.LoadSchema(mapPath)
-	if err != nil {
-		return fmt.Errorf("load map.yaml: %w", err)
-	}
-
-	if s.Context == nil {
-		s.Context = &schema.ContextBlock{Project: schema.ProjectContext{}}
-	}
-
-	// Parse dot-notation key: project.conventions, project.name, etc.
-	parts := strings.SplitN(key, ".", 2)
-	if len(parts) != 2 {
-		if outputFormat == "json" {
-			return printJSON(map[string]any{"error": "key must be in dot notation (e.g., project.conventions)"})
-		}
-		return fmt.Errorf("key must be in dot notation (e.g., project.conventions)")
-	}
-
-	section := parts[0]
-	field := parts[1]
-
-	switch section {
-	case "project":
-		switch field {
-		case "name":
-			s.SetProjectName(value)
-		case "description":
-			s.SetProjectDescription(value)
-		case "conventions":
-			s.AppendConvention(value)
-		case "patterns":
-			s.AppendPattern(value)
-		case "notes":
-			s.AppendNote(value)
-		default:
-			if outputFormat == "json" {
-				return printJSON(map[string]any{"error": "unknown project field: " + field})
-			}
-			return fmt.Errorf("unknown project field: %s (known: name, description, conventions, patterns, notes)", field)
-		}
-	default:
-		if outputFormat == "json" {
-			return printJSON(map[string]any{"error": "unknown section: " + section})
-		}
-		return fmt.Errorf("unknown section: %s (known: project)", section)
-	}
-
-	if err := s.Save(mapPath); err != nil {
-		return fmt.Errorf("save map.yaml: %w", err)
-	}
-
-	if outputFormat == "json" {
-		return printJSON(map[string]any{
-			"key":   key,
-			"value": value,
-			"saved": mapPath,
-		})
-	}
-
-	fmt.Printf("Updated %s = %q in %s\n", key, value, mapPath)
-	return nil
-}
-
 func runContextAdd(cmd *cobra.Command, args []string) error {
 	sortKey := args[0]
 	value := args[1]
 	dbPath := GetDBPath()
-	mapPath := getContextMapPath()
 
 	// Load or create store
 	s, err := loadStore(dbPath)
@@ -271,21 +187,6 @@ func runContextAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save .avdb: %w", err)
 	}
 
-	// Also append to pseudocontext in map.yaml
-	sc, err := schema.LoadSchema(mapPath)
-	if err == nil && sc != nil {
-		// Infer what to append based on sort-key prefix
-		if strings.HasPrefix(sortKey, "code/conventions") || strings.HasPrefix(sortKey, "code/patterns") || strings.HasPrefix(sortKey, "code/") {
-			sc.AppendConvention(value)
-		} else if strings.HasPrefix(sortKey, "notes/") {
-			sc.AppendNote(value)
-		} else {
-			// Generic append to notes
-			sc.AppendNote(value)
-		}
-		sc.Save(mapPath)
-	}
-
 	if outputFormat == "json" {
 		return printJSON(map[string]any{
 			"id":      id,
@@ -299,6 +200,9 @@ func runContextAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runContextEdit(cmd *cobra.Command, args []string) error {
+	fmt.Println("WARNING: context edit is deprecated. Use 'ave search' to find entries or 'ave add' to add new ones.")
+	fmt.Println()
+
 	mapPath := getContextMapPath()
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -412,68 +316,6 @@ func printHierarchy(sb *strings.Builder, key string, value any, indent int) {
 			}
 		}
 	}
-}
-
-func runContextSync(cmd *cobra.Command, args []string) error {
-	dbPath := GetDBPath()
-	mapPath := getContextMapPath()
-
-	s, err := format.Load(dbPath)
-	if err != nil {
-		return fmt.Errorf("load .avdb: %w", err)
-	}
-
-	entries := s.All()
-	if len(entries) == 0 {
-		if outputFormat == "json" {
-			return printJSON(map[string]any{"message": "no entries to sync"})
-		}
-		fmt.Println("No entries to sync.")
-		return nil
-	}
-
-	// Build hierarchy from entries: e.g., "items/cards/card1" → nested map
-	hierarchy := buildKeyHierarchy(entries)
-
-	// Load existing schema and update context
-	sc, err := schema.LoadSchema(mapPath)
-	if err != nil {
-		return fmt.Errorf("load map.yaml: %w", err)
-	}
-
-	if sc.Context == nil {
-		sc.Context = &schema.ContextBlock{Project: schema.ProjectContext{}}
-	}
-
-	// Clear and rebuild
-	sc.Context.Project.Conventions = []string{}
-	sc.Context.Project.Patterns = []string{}
-	sc.Context.Project.Notes = schema.NotesHierarchy{}
-
-	// Add hierarchy directly (becomes nested YAML)
-	for k, v := range hierarchy {
-		sc.Context.Project.Notes[k] = v
-	}
-
-	// Also update the schema keys section with actual entries
-	for _, e := range entries {
-		autoGrowSchema(mapPath, e.SortKey)
-	}
-
-	if err := sc.Save(mapPath); err != nil {
-		return fmt.Errorf("save map.yaml: %w", err)
-	}
-
-	if outputFormat == "json" {
-		return printJSON(map[string]any{
-			"synced_entries": len(entries),
-			"hierarchy":      hierarchy,
-			"saved":          mapPath,
-		})
-	}
-
-	fmt.Printf("Synced %d entries into context\n", len(entries))
-	return nil
 }
 
 func printJSON(v any) error {
